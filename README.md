@@ -4,6 +4,7 @@
 
 ```
 被控電腦 ── HDMI ──▶ 擷取卡 (YUYV) ──USB3──▶ 本機 ffmpeg (H.264) ──WebSocket──▶ 瀏覽器 (WebCodecs)
+                       └─ (HDMI 音訊) ──────▶ 本機 ffmpeg (Opus)  ──WebSocket──▶ 瀏覽器 (Web Audio)
 被控電腦 ◀─ USB HID ── CH9329 ◀─ UART ─ CH340 ◀── USB ── 本機 ◀──WebSocket── 瀏覽器（鍵盤/滑鼠）
 ```
 
@@ -42,6 +43,7 @@ WebCodecs 只在 HTTPS（或 localhost）下可用，所以請不要關掉 TLS�
 - **點一下畫面** 開始擷取鍵盤與滑鼠；離開畫面（失去焦點）時會自動放開所有按鍵。
 - **絕對滑鼠**：本機游標在哪，被控端游標就在哪。BIOS 或部分遊戲不支援絕對座標時改用 **相對滑鼠**（Pointer Lock，按 Esc 解除）。
 - **全螢幕** 時會鎖定鍵盤（Chromium），Esc、Alt+Tab、Win 鍵也會送到被控端；長按 Esc 離開全螢幕。
+- **聲音**：按工具列的「聲音」開啟被控端 HDMI 音訊（瀏覽器規定需點擊後才能播放），偏好會記在瀏覽器中。
 - **貼上文字** 以 US 鍵盤配置逐字輸入，只支援 ASCII。
 - 工具列可切換擷取裝置、YUYV 解析度/更新率與位元率，會立即套用並保存。
 
@@ -50,6 +52,9 @@ WebCodecs 只在 HTTPS（或 localhost）下可用，所以請不要關掉 TLS�
 - **影像**：ffmpeg 從 V4L2 讀 YUYV → VAAPI `h264_vaapi`（或 libx264 ultrafast/zerolatency）→ Annex‑B 輸出到 stdout。
   伺服器以 AUD 切出每個影格，加上 9 位元組標頭（flags + 時間戳）後經 WebSocket 送出；瀏覽器用 `VideoDecoder` 解碼後畫到 canvas。
   沒有觀看者 5 秒後停止 ffmpeg，釋放擷取卡。客戶端跟不上時丟棄到下一個關鍵影格（預設每秒一個）。
+- **音訊**：ffmpeg 從 ALSA 讀擷取卡的 48 kHz 立體聲 → Opus 20 ms 封包 → Ogg 輸出到 stdout，伺服器拆出 Opus 封包送出；
+  瀏覽器以 `AudioDecoder` 解碼後排入 Web Audio，維持約 60 ms 緩衝，超過 300 ms 就重新對齊以免延遲累積。
+  沒有人開聲音時不會啟動音訊擷取。
 - **HID**：CH9329 協定（`57 AB addr cmd len data sum`），所有序列埠 I/O 在單一執行緒上；
   滑鼠移動會合併成最新一筆，避免序列埠塞車。每秒查詢一次晶片狀態（被控端 USB 連線、Num/Caps/Scroll 燈號）。
 - **安全**：scrypt 雜湊密碼、記憶體內 session（重啟伺服器需重新登入）、Cookie `HttpOnly; Secure; SameSite=Strict`、

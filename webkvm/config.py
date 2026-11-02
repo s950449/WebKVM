@@ -30,6 +30,13 @@ class VideoConfig:
 
 
 @dataclass
+class AudioConfig:
+    enabled: bool = True
+    device: str = "auto"    # auto、ALSA 裝置（如 hw:CARD=Video,DEV=0）或 pulse:<來源名稱>
+    bitrate: int = 128      # Opus kbps
+
+
+@dataclass
 class HidConfig:
     port: str = "auto"      # auto 或序列埠路徑
     baud: int = 115200
@@ -40,6 +47,7 @@ class HidConfig:
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     video: VideoConfig = field(default_factory=VideoConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
     hid: HidConfig = field(default_factory=HidConfig)
 
 
@@ -57,7 +65,7 @@ def load(path):
     if path.exists():
         with open(path, "rb") as f:
             raw = tomllib.load(f)
-        for section in ("server", "video", "hid"):
+        for section in ("server", "video", "audio", "hid"):
             _fill(getattr(cfg, section), raw.get(section, {}), section)
     return cfg
 

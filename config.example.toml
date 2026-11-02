@@ -19,6 +19,11 @@ bitrate = 8000        # kbps
 gop = 1.0             # 關鍵影格間隔（秒）
 vaapi_device = "/dev/dri/renderD128"
 
+[audio]
+enabled = true
+device = "auto"       # auto 會找 MACROSILICON 擷取卡；或 ALSA 名稱如 "hw:CARD=Video,DEV=0"，或 "pulse:<來源名稱>"
+bitrate = 128         # Opus kbps
+
 [hid]
 port = "auto"         # auto 會找 /dev/serial/by-id/usb-1a86_*
 baud = 115200         # 依 CH9329 的設定，出廠預設為 9600

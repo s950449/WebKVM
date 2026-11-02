@@ -1,24 +1,16 @@
-"""擷取卡 (YUYV) → ffmpeg H.264 編碼 → 以存取單元 (access unit) 為單位分送給 WebSocket 客戶端。"""
-import asyncio
-import collections
+"""擷取卡 (YUYV) → ffmpeg H.264 編碼 → 以存取單元 (access unit) 為單位分送。"""
 import functools
 import glob
-import json
 import logging
 import os
 import re
-import shlex
-import struct
 import subprocess
-import time
+
+from .pipeline import FFmpegPipeline
 
 log = logging.getLogger(__name__)
 
 AUD = b"\x00\x00\x01\x09"
-FLAG_KEY = 0x01
-CLIENT_QUEUE = 15     # 約 0.25 秒；客戶端跟不上就丟到下一個關鍵影格
-IDLE_STOP = 5.0       # 最後一個觀看者離開後多久停止 ffmpeg
-RETRY_DELAY = 2.0
 
 
 def list_devices():
@@ -104,28 +96,33 @@ def is_keyframe(au):
     return False
 
 
-class Client:
-    __slots__ = ("queue", "need_key")
+def annexb_splitter():
+    """以 AUD 切分 Annex-B 串流；一個存取單元要等到下一個 AUD 出現才送出。"""
+    buf = bytearray()
 
-    def __init__(self):
-        self.queue = asyncio.Queue(maxsize=CLIENT_QUEUE)
-        self.need_key = True
+    def feed(chunk):
+        buf.extend(chunk)
+        out = []
+        while (i := buf.find(AUD, 5)) >= 0:
+            if buf[i - 1] == 0:
+                i -= 1
+            au = bytes(buf[:i])
+            out.append((au, is_keyframe(au)))
+            del buf[:i]
+        return out
+
+    return feed
 
 
-class VideoPipeline:
+class VideoPipeline(FFmpegPipeline):
+    name = "video"
+
     def __init__(self, cfg):
+        super().__init__()
         self.cfg = cfg
-        self.clients = set()
         self.device = None
         self.encoder = None
-        self.running = False
-        self.last_error = None
-        self._task = None
-        self._proc = None
-        self._stop_handle = None
-        self._restart = False
         self._vaapi_failed = False
-        self._t0 = time.monotonic()
 
     def describe(self):
         c = self.cfg
@@ -133,75 +130,9 @@ class VideoPipeline:
                 "width": c.width, "height": c.height, "fps": c.fps, "bitrate": c.bitrate,
                 "encoder": self.encoder, "running": self.running, "error": self.last_error}
 
-    def subscribe(self):
-        c = Client()
-        self.clients.add(c)
-        if self._stop_handle:
-            self._stop_handle.cancel()
-            self._stop_handle = None
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._run())
-        elif self.running:
-            c.queue.put_nowait(self._info_msg())
-        return c
-
-    def unsubscribe(self, c):
-        self.clients.discard(c)
-        if not self.clients and self._task and not self._stop_handle:
-            self._stop_handle = asyncio.get_running_loop().call_later(IDLE_STOP, self._stop_if_idle)
-
     def restart(self):
-        """套用新參數：結束目前的 ffmpeg，主迴圈會立刻以新設定重啟。"""
         self._vaapi_failed = False
-        self.last_error = None
-        for c in self.clients:
-            c.need_key = True
-        if self._proc and self._proc.returncode is None:
-            self._restart = True
-            self._proc.terminate()
-
-    async def shutdown(self):
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-
-    def _stop_if_idle(self):
-        self._stop_handle = None
-        if not self.clients and self._task:
-            log.info("沒有觀看者，停止擷取")
-            self._task.cancel()
-
-    def _info_msg(self):
-        c = self.cfg
-        return json.dumps({"t": "info", "width": c.width, "height": c.height, "fps": c.fps,
-                           "encoder": self.encoder, "device": self.device})
-
-    def _broadcast_text(self, msg):
-        for c in self.clients:
-            try:
-                c.queue.put_nowait(msg)
-            except asyncio.QueueFull:
-                pass
-
-    def _publish(self, au):
-        key = is_keyframe(au)
-        pkt = struct.pack("!BQ", FLAG_KEY if key else 0,
-                          int((time.monotonic() - self._t0) * 1e6)) + au
-        for c in self.clients:
-            if c.need_key:
-                if not key:
-                    continue
-                c.need_key = False
-            try:
-                c.queue.put_nowait(pkt)
-            except asyncio.QueueFull:
-                # 客戶端跟不上：清空佇列，等下一個關鍵影格重新同步
-                c.need_key = True
-                while not c.queue.empty():
-                    c.queue.get_nowait()
+        super().restart()
 
     def _pick_encoder(self):
         enc = self.cfg.encoder
@@ -212,78 +143,21 @@ class VideoPipeline:
             enc = "vaapi" if vaapi_ok else "libx264"
         return enc
 
-    async def _kill(self):
-        p = self._proc
-        if p and p.returncode is None:
-            p.terminate()
-            try:
-                await asyncio.wait_for(p.wait(), 2)
-            except asyncio.TimeoutError:
-                p.kill()
-                await p.wait()
-
-    async def _run(self):
-        try:
-            while self.clients:
-                await self._run_once()
-                if self._restart:
-                    self._restart = False
-                    continue
-                if self.clients:
-                    await asyncio.sleep(RETRY_DELAY)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await self._kill()
-            self.running = False
-            self._proc = None
-
-    async def _run_once(self):
+    def _command(self):
         self.device = resolve_device(self.cfg.device)
-        enc = self._pick_encoder()
-        cmd = build_cmd(self.cfg, self.device, enc)
-        log.info("啟動 ffmpeg: %s", shlex.join(cmd))
-        self._proc = proc = await asyncio.create_subprocess_exec(
-            *cmd, stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        self.encoder = enc
-        self.running = True
-        for c in self.clients:
-            c.need_key = True
-        self._broadcast_text(self._info_msg())
+        self.encoder = self._pick_encoder()
+        return build_cmd(self.cfg, self.device, self.encoder)
 
-        tail = collections.deque(maxlen=15)
-        err_task = asyncio.create_task(self._drain_stderr(proc, tail))
-        frames = 0
-        buf = bytearray()
-        try:
-            while chunk := await proc.stdout.read(1 << 16):
-                buf += chunk
-                while (i := buf.find(AUD, 5)) >= 0:
-                    if buf[i - 1] == 0:
-                        i -= 1
-                    self._publish(bytes(buf[:i]))
-                    del buf[:i]
-                    frames += 1
-        finally:
-            await self._kill()
-            await err_task
-            self.running = False
+    def _info(self):
+        c = self.cfg
+        return {"width": c.width, "height": c.height, "fps": c.fps,
+                "encoder": self.encoder, "device": self.device}
 
-        if self._restart:
-            return
-        msg = "\n".join(tail) or f"ffmpeg 結束 (code {proc.returncode})"
-        if enc == "vaapi" and frames == 0 and self.cfg.encoder == "auto":
+    def _parser(self):
+        return annexb_splitter()
+
+    def _on_failure(self, units, msg):
+        if self.encoder == "vaapi" and units == 0 and self.cfg.encoder == "auto":
             self._vaapi_failed = True
             msg += "\nVAAPI 編碼失敗，改用 libx264 重試"
-        log.warning("擷取中斷: %s", msg)
-        self.last_error = msg
-        self._broadcast_text(json.dumps({"t": "error", "msg": msg}))
-
-    @staticmethod
-    async def _drain_stderr(proc, tail):
-        async for line in proc.stderr:
-            s = line.decode(errors="replace").strip()
-            if s:
-                tail.append(s)
-                log.info("ffmpeg: %s", s)
+        return msg

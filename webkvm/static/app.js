@@ -151,6 +151,123 @@ setInterval(() => {
   bytes = 0;
 }, 1000);
 
+// ---------- 音訊 (Opus over WebSocket → WebCodecs → Web Audio) ----------
+
+const AUDIO_TARGET = 0.06; // 播放緩衝目標（秒）
+const AUDIO_MAX = 0.3; // 緩衝超過這個值就丟掉重來，避免延遲累積
+
+let audioOn = false;
+let actx = null;
+let gain = null;
+let adec = null;
+let aws = null;
+let nextTime = 0;
+
+function playAudio(ad) {
+  const buf = actx.createBuffer(ad.numberOfChannels, ad.numberOfFrames, ad.sampleRate);
+  for (let ch = 0; ch < ad.numberOfChannels; ch++) {
+    ad.copyTo(buf.getChannelData(ch), { planeIndex: ch, format: 'f32-planar' });
+  }
+  ad.close();
+  const now = actx.currentTime;
+  if (nextTime < now + 0.01 || nextTime > now + AUDIO_MAX) nextTime = now + AUDIO_TARGET;
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  src.connect(gain);
+  src.start(nextTime);
+  nextTime += buf.duration;
+}
+
+function newAudioDecoder() {
+  const d = new AudioDecoder({
+    output: playAudio,
+    error: (e) => {
+      console.warn('audio decoder error', e);
+      adec = audioOn ? newAudioDecoder() : null;
+    },
+  });
+  d.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
+  return d;
+}
+
+function connectAudio() {
+  if (!audioOn) return;
+  const ws = aws = new WebSocket(wsUrl('/ws/audio'));
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === 'string') {
+      const m = JSON.parse(ev.data);
+      if (m.t === 'error') flashHint('音訊錯誤：' + m.msg);
+      return;
+    }
+    if (!adec || adec.state !== 'configured') return;
+    if (adec.decodeQueueSize > 10) return;
+    const ts = Number(new DataView(ev.data).getBigUint64(1));
+    adec.decode(new EncodedAudioChunk({ type: 'key', timestamp: ts, data: new Uint8Array(ev.data, 9) }));
+  };
+  ws.onclose = () => {
+    if (aws === ws && audioOn) setTimeout(connectAudio, 2000);
+  };
+}
+
+function setAudio(on) {
+  if (on && !('AudioDecoder' in window)) {
+    flashHint('此瀏覽器不支援 WebCodecs 音訊解碼');
+    on = false;
+  }
+  audioOn = on;
+  const btn = $('#btn-audio');
+  btn.textContent = on ? '聲音：開' : '聲音：關';
+  btn.setAttribute('aria-pressed', String(on));
+  try { localStorage.setItem('webkvm.audio', on ? '1' : '0'); } catch { /* 無法儲存偏好 */ }
+
+  if (on) {
+    if (!actx) {
+      actx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
+      gain = actx.createGain();
+      gain.gain.value = $('#volume').value / 100;
+      gain.connect(actx.destination);
+    }
+    actx.resume();
+    if (!adec) adec = newAudioDecoder();
+    if (!aws) connectAudio();
+  } else {
+    const ws = aws;
+    aws = null;
+    if (ws) ws.close();
+    if (adec && adec.state !== 'closed') adec.close();
+    adec = null;
+    if (actx) actx.suspend();
+  }
+}
+
+$('#btn-audio').addEventListener('click', () => setAudio(!audioOn));
+
+$('#volume').addEventListener('input', (e) => {
+  if (gain) gain.gain.value = e.target.value / 100;
+  try { localStorage.setItem('webkvm.volume', e.target.value); } catch { /* 無法儲存偏好 */ }
+});
+
+// 瀏覽器要求使用者互動後才能播放聲音：上次有開聲音的話，在第一次點擊時恢復
+function restoreAudioOnGesture() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem('webkvm.audio');
+    const vol = localStorage.getItem('webkvm.volume');
+    if (vol !== null) $('#volume').value = vol;
+  } catch { /* 無法讀取偏好 */ }
+  if (saved !== '1') return;
+  const once = (e) => {
+    document.removeEventListener('pointerdown', once, true);
+    document.removeEventListener('keydown', once, true);
+    // 直接點聲音按鈕時交給按鈕本身切換，否則會開了又被關掉
+    if (e.target.closest && e.target.closest('#btn-audio')) return;
+    if (!audioOn) setAudio(true);
+  };
+  document.addEventListener('pointerdown', once, true);
+  document.addEventListener('keydown', once, true);
+}
+
 // ---------- HID ----------
 
 let hws = null;
@@ -470,5 +587,6 @@ document.addEventListener('fullscreenchange', () => {
 fit();
 showHint();
 loadState().catch(() => {});
+restoreAudioOnGesture();
 connectVideo();
 connectHid();

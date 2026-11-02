@@ -8,7 +8,9 @@ from urllib.parse import urlsplit
 from aiohttp import WSMsgType, web
 
 from . import auth, config
+from .audio import AudioPipeline
 from .ch9329 import CH9329
+from .pipeline import FFmpegPipeline
 from .video import VideoPipeline, list_devices, list_modes
 
 log = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ K_SESSIONS = web.AppKey("sessions", auth.Sessions)
 K_LIMITER = web.AppKey("limiter", auth.LoginLimiter)
 K_HID = web.AppKey("hid", CH9329)
 K_VIDEO = web.AppKey("video", VideoPipeline)
+K_AUDIO = web.AppKey("audio", AudioPipeline)
 K_HID_WS = web.AppKey("hid_ws", set)
 
 
@@ -98,6 +101,7 @@ async def api_state(request):
     devices = await loop.run_in_executor(None, list_devices)
     modes = await loop.run_in_executor(None, list_modes, desc["resolved"])
     return web.json_response({"video": desc, "devices": devices, "modes": modes,
+                              "audio": request.app[K_AUDIO].describe(),
                               "hid": request.app[K_HID].status()}, headers=NO_CACHE)
 
 
@@ -129,10 +133,17 @@ async def api_video(request):
 # ---------- WebSocket ----------
 
 async def ws_video(request):
+    return await _stream_ws(request, request.app[K_VIDEO])
+
+
+async def ws_audio(request):
+    return await _stream_ws(request, request.app[K_AUDIO])
+
+
+async def _stream_ws(request, pipeline: FFmpegPipeline):
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
-    video = request.app[K_VIDEO]
-    client = video.subscribe()
+    client = pipeline.subscribe()
 
     async def pump():
         while True:
@@ -150,7 +161,7 @@ async def ws_video(request):
         sender.cancel()
         with contextlib.suppress(asyncio.CancelledError, ConnectionError):
             await sender
-        video.unsubscribe(client)
+        pipeline.unsubscribe(client)
     return ws
 
 
@@ -216,6 +227,7 @@ async def _lifecycle(app):
     yield
     task.cancel()
     await app[K_VIDEO].shutdown()
+    await app[K_AUDIO].shutdown()
     await asyncio.get_running_loop().run_in_executor(None, app[K_HID].close)
 
 
@@ -229,6 +241,7 @@ def create_app(cfg, data_dir, pw_hash, secure):
     app[K_LIMITER] = auth.LoginLimiter()
     app[K_HID] = CH9329(cfg.hid.port, cfg.hid.baud, cfg.hid.address)
     app[K_VIDEO] = VideoPipeline(cfg.video)
+    app[K_AUDIO] = AudioPipeline(cfg.audio)
     app[K_HID_WS] = set()
     app.cleanup_ctx.append(_lifecycle)
     app.add_routes([
@@ -239,6 +252,7 @@ def create_app(cfg, data_dir, pw_hash, secure):
         web.get("/api/state", api_state),
         web.post("/api/video", api_video),
         web.get("/ws/video", ws_video),
+        web.get("/ws/audio", ws_audio),
         web.get("/ws/hid", ws_hid),
         web.static("/static", STATIC),
     ])

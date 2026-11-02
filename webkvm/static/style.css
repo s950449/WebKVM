@@ -30,6 +30,8 @@ button, select, input, textarea {
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button[aria-pressed="true"] { border-color: var(--ok); color: var(--ok); }
+input[type="range"] { width: 80px; padding: 0; accent-color: var(--accent); }
 .muted { color: var(--muted); }
 .error { color: var(--bad); }
 
