@@ -54,3 +54,7 @@ WebCodecs 只在 HTTPS（或 localhost）下可用，所以請不要關掉 TLS�
   滑鼠移動會合併成最新一筆，避免序列埠塞車。每秒查詢一次晶片狀態（被控端 USB 連線、Num/Caps/Scroll 燈號）。
 - **安全**：scrypt 雜湊密碼、記憶體內 session（重啟伺服器需重新登入）、Cookie `HttpOnly; Secure; SameSite=Strict`、
   WebSocket 與 POST 檢查 Origin、同一 IP 5 分鐘內失敗 5 次即鎖定。
+
+## 授權
+
+BSD 2-Clause License，見 [LICENSE](LICENSE)。
