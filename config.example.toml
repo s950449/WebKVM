@@ -1,0 +1,25 @@
+# 複製成 config.toml 後修改；所有選項都可省略，省略時使用以下預設值。
+# 解析度 / 更新率 / 位元率 / 擷取裝置也可以在 WebUI 中切換（會存到 data/state.json，優先於此檔）。
+
+[server]
+host = "0.0.0.0"
+port = 8443
+tls = true            # WebCodecs 需要 HTTPS（或 localhost）
+cert = ""             # 留空則自動在 data/ 產生自簽憑證
+key = ""
+session_hours = 12
+
+[video]
+device = "auto"       # auto 會優先選 MACROSILICON (MS2130/MS2131)，或填 /dev/v4l/by-id/... 路徑
+width = 1920
+height = 1080
+fps = 60
+encoder = "auto"      # auto | vaapi | libx264
+bitrate = 8000        # kbps
+gop = 1.0             # 關鍵影格間隔（秒）
+vaapi_device = "/dev/dri/renderD128"
+
+[hid]
+port = "auto"         # auto 會找 /dev/serial/by-id/usb-1a86_*
+baud = 115200         # 依 CH9329 的設定，出廠預設為 9600
+address = 0

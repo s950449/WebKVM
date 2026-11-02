@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebKVM</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="app">
+<header id="bar">
+  <span class="brand">WebKVM</span>
+  <span class="group">
+    <span id="st-video" class="pill">影像</span>
+    <span id="st-hid" class="pill">CH9329</span>
+    <span id="st-usb" class="pill">被控端 USB</span>
+    <span class="leds"><span id="led-num">NUM</span><span id="led-caps">CAPS</span><span id="led-scroll">SCRL</span></span>
+    <span id="stats"></span>
+  </span>
+  <span class="spacer"></span>
+  <span class="group">
+    <select id="sel-device" title="擷取裝置"></select>
+    <select id="sel-mode" title="解析度 / 更新率 (YUYV)"></select>
+    <select id="sel-bitrate" title="編碼位元率">
+      <option value="2000">2 Mbps</option>
+      <option value="4000">4 Mbps</option>
+      <option value="8000">8 Mbps</option>
+      <option value="12000">12 Mbps</option>
+      <option value="20000">20 Mbps</option>
+      <option value="30000">30 Mbps</option>
+    </select>
+    <select id="sel-mouse" title="滑鼠模式">
+      <option value="abs">絕對滑鼠</option>
+      <option value="rel">相對滑鼠</option>
+    </select>
+  </span>
+  <span class="group">
+    <button id="btn-cad">Ctrl+Alt+Del</button>
+    <button id="btn-paste">貼上文字</button>
+    <button id="btn-release" title="被控端出現卡鍵時使用">放開所有按鍵</button>
+    <button id="btn-fs">全螢幕</button>
+    <form method="post" action="/logout"><button>登出</button></form>
+  </span>
+</header>
+<main id="stage">
+  <canvas id="screen" width="1920" height="1080" tabindex="0"></canvas>
+  <div id="overlay">連線中…</div>
+  <div id="hint" hidden></div>
+</main>
+<dialog id="dlg-paste">
+  <form method="dialog">
+    <h2>輸入文字到被控端</h2>
+    <p class="muted">以 US 鍵盤配置逐字輸入，僅支援 ASCII 字元。</p>
+    <textarea id="paste-text" rows="8" maxlength="5000" spellcheck="false"></textarea>
+    <div class="actions">
+      <button value="cancel">取消</button>
+      <button value="send" class="primary">送出</button>
+    </div>
+  </form>
+</dialog>
+<script src="/static/app.js"></script>
+</body>
+</html>

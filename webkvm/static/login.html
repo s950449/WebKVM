@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebKVM 登入</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login">
+<form method="post" action="/login" class="card">
+  <h1>WebKVM</h1>
+  <label for="pw">密碼</label>
+  <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
+  <p id="err" class="error" hidden></p>
+  <button class="primary">登入</button>
+</form>
+<script>
+  const e = new URLSearchParams(location.search).get('e');
+  const msg = {bad: '密碼錯誤', locked: '失敗次數過多，請 5 分鐘後再試'}[e];
+  if (msg) { const p = document.getElementById('err'); p.textContent = msg; p.hidden = false; }
+</script>
+</body>
+</html>

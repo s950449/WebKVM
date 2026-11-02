@@ -1,0 +1,9 @@
+[project]
+name = "webkvm"
+version = "0.1.0"
+description = "CH9329 + USB capture card (MS2130/MS2131) web KVM"
+requires-python = ">=3.11"
+dependencies = ["aiohttp>=3.9", "pyserial>=3.5"]
+
+[tool.uv]
+package = false
