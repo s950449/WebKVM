@@ -73,7 +73,8 @@ def build_cmd(cfg, device, encoder):
             "-video_size", f"{cfg.width}x{cfg.height}", "-framerate", str(cfg.fps),
             "-i", device]
     if encoder == "vaapi":
-        cmd += ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-profile:v", "high",
+        # Upload YUYV first so VAAPI VPP performs the conversion to NV12.
+        cmd += ["-vf", "hwupload,scale_vaapi=format=nv12", "-c:v", "h264_vaapi", "-profile:v", "high",
                 "-async_depth", "1", "-aud", "1", "-rc_mode", "VBR",
                 "-b:v", f"{br}k", "-maxrate", f"{br * 3 // 2}k"]
     else:
