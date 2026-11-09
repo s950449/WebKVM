@@ -247,13 +247,20 @@ class CH9329:
         if len(body) != hdr[4] + 1 or (sum(hdr + body[:-1]) & 0xFF) != body[-1]:
             self._ser.reset_input_buffer()
             raise CH9329Error(f"指令 0x{cmd:02X} 回應校驗失敗")
+        if hdr[2] != self.addr or hdr[3] not in (cmd | 0x80, cmd | 0xC0):
+            self._ser.reset_input_buffer()
+            raise CH9329Error(f"指令 0x{cmd:02X} 回應位址或指令不符: {hdr.hex(' ')}")
         if hdr[3] == cmd | 0xC0:
+            if not hdr[4]:
+                raise CH9329Error(f"指令 0x{cmd:02X} 錯誤回應缺少狀態碼")
             raise CH9329Error(f"指令 0x{cmd:02X} 失敗，狀態碼 0x{body[0]:02X}")
         return body[:-1]
 
     def _poll_info(self):
         try:
             d = self._xfer(CMD_GET_INFO, b"")
+            if len(d) < 3:
+                raise CH9329Error(f"晶片資訊回應過短: {d.hex(' ')}")
         except CH9329Error as e:
             log.debug("%s", e)
             self._set(chip=False, usb=False)
