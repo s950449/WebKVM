@@ -1,4 +1,4 @@
-"""擷取卡 (YUYV) → ffmpeg H.264 編碼 → 以存取單元 (access unit) 為單位分送。"""
+"""擷取卡 (YUYV) → ffmpeg AV1 / H.264 編碼 → 逐影格分送。"""
 import functools
 import glob
 import logging
@@ -68,11 +68,19 @@ def build_cmd(cfg, device, encoder):
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin"]
     if encoder == "vaapi":
         cmd += ["-vaapi_device", cfg.vaapi_device]
+    elif encoder == "qsv":
+        cmd += ["-init_hw_device", f"qsv=qs:hw,child_device={cfg.qsv_device}",
+                "-filter_hw_device", "qs"]
     cmd += ["-fflags", "nobuffer", "-flags", "low_delay",
             "-f", "v4l2", "-input_format", "yuyv422",
             "-video_size", f"{cfg.width}x{cfg.height}", "-framerate", str(cfg.fps),
             "-i", device]
-    if encoder == "vaapi":
+    if encoder == "qsv":
+        cmd += ["-vf", "format=nv12,hwupload=extra_hw_frames=16",
+                "-c:v", "av1_qsv", "-preset", "veryfast", "-async_depth", "1",
+                "-low_delay_brc", "1", "-look_ahead_depth", "0",
+                "-b:v", f"{br}k", "-maxrate", f"{br * 3 // 2}k"]
+    elif encoder == "vaapi":
         cmd += ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-profile:v", "high",
                 "-async_depth", "1", "-aud", "1", "-rc_mode", "VBR",
                 "-b:v", f"{br}k", "-maxrate", f"{br * 3 // 2}k"]
@@ -80,7 +88,8 @@ def build_cmd(cfg, device, encoder):
         cmd += ["-vf", "format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
                 "-tune", "zerolatency", "-x264-params", "aud=1:repeat-headers=1",
                 "-b:v", f"{br}k", "-maxrate", f"{br}k", "-bufsize", f"{br // 2}k"]
-    cmd += ["-bf", "0", "-g", str(gop), "-flush_packets", "1", "-f", "h264", "-"]
+    cmd += ["-bf", "0", "-g", str(gop), "-flush_packets", "1",
+            "-f", "ivf" if encoder == "qsv" else "h264", "-"]
     return cmd
 
 
@@ -94,6 +103,69 @@ def is_keyframe(au):
             return False
         i = au.find(b"\x00\x00\x01", i + 3)
     return False
+
+
+def av1_is_keyframe(frame):
+    """QSV 的隨機存取影格會包含 sequence header OBU。"""
+    pos = 0
+    while pos < len(frame):
+        header = frame[pos]
+        pos += 1
+        obu_type = (header >> 3) & 15
+        if header & 4:
+            pos += 1
+        if not header & 2:
+            return obu_type == 1
+        size = 0
+        for shift in range(0, 56, 7):
+            if pos >= len(frame):
+                return False
+            value = frame[pos]
+            pos += 1
+            size |= (value & 127) << shift
+            if not value & 128:
+                break
+        else:
+            return False
+        if pos + size > len(frame):
+            return False
+        if obu_type == 1:
+            return True
+        pos += size
+    return False
+
+
+def ivf_splitter():
+    """拆除 IVF 標頭，容許任意 stdout 區塊邊界。"""
+    buf = bytearray()
+    header_done = False
+
+    def feed(chunk):
+        nonlocal header_done
+        buf.extend(chunk)
+        if not header_done:
+            if len(buf) < 32:
+                return []
+            if buf[:4] != b"DKIF" or buf[8:12] != b"AV01":
+                raise ValueError("預期 AV1 IVF 串流")
+            header_size = int.from_bytes(buf[6:8], "little")
+            if header_size < 32:
+                raise ValueError("無效的 IVF 標頭")
+            if len(buf) < header_size:
+                return []
+            del buf[:header_size]
+            header_done = True
+        out = []
+        while len(buf) >= 12:
+            size = int.from_bytes(buf[:4], "little")
+            if len(buf) < 12 + size:
+                break
+            frame = bytes(buf[12:12 + size])
+            del buf[:12 + size]
+            out.append((frame, av1_is_keyframe(frame)))
+        return out
+
+    return feed
 
 
 def annexb_splitter():
@@ -151,10 +223,11 @@ class VideoPipeline(FFmpegPipeline):
     def _info(self):
         c = self.cfg
         return {"width": c.width, "height": c.height, "fps": c.fps,
-                "encoder": self.encoder, "device": self.device}
+                "encoder": self.encoder, "device": self.device,
+                "codec": "av01.0.08M.08" if self.encoder == "qsv" else "h264"}
 
     def _parser(self):
-        return annexb_splitter()
+        return ivf_splitter() if self.encoder == "qsv" else annexb_splitter()
 
     def _on_failure(self, units, msg):
         if self.encoder == "vaapi" and units == 0 and self.cfg.encoder == "auto":

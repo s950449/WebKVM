@@ -34,10 +34,11 @@ function fit() {
 }
 new ResizeObserver(fit).observe($('#stage'));
 
-// ---------- 影像 (H.264 Annex-B over WebSocket → WebCodecs) ----------
+// ---------- 影像 (AV1 / H.264 over WebSocket → WebCodecs) ----------
 
 let decoder = null;
 let codec = null;
+let streamCodec = 'h264';
 let waitKey = true;
 let frames = 0;
 let bytes = 0;
@@ -88,7 +89,7 @@ function onVideoData(buf) {
   bytes += buf.byteLength;
 
   if (key) {
-    const c = avcCodec(data);
+    const c = streamCodec === 'h264' ? avcCodec(data) : streamCodec;
     if (c && (c !== codec || !decoder)) {
       resetDecoder();
       try {
@@ -129,6 +130,7 @@ function connectVideo() {
     const m = JSON.parse(ev.data);
     if (m.t === 'info') {
       resetDecoder();
+      streamCodec = m.codec || 'h264';
       showOverlay('等待畫面…');
       setPill($('#st-video'), 'ok', `${m.width}x${m.height}@${m.fps} · ${m.encoder}`);
     } else if (m.t === 'error') {

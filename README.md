@@ -13,7 +13,8 @@
 - Linux、Python ≥ 3.11、`ffmpeg`、`v4l2-ctl`（v4l-utils）、`openssl`
 - Python 套件：`aiohttp`、`pyserial`（`pacman -S python-aiohttp python-pyserial` 或 `uv sync`）
 - 使用者需在 `video`（擷取卡）與 `uucp`（Arch）/ `dialout`（Debian 系）群組
-- 有 Intel/AMD GPU 時使用 VAAPI 硬體編碼，否則自動改用 libx264
+- 預設使用 Intel QSV AV1：需要支援 AV1 編碼的 Intel GPU、oneVPL / Intel 媒體驅動，以及含 `av1_qsv` 的 ffmpeg；瀏覽器須支援 AV1 WebCodecs 解碼。
+- `[video] encoder` 可設為 `qsv`（預設 AV1）、`vaapi`（H.264）、`libx264`（H.264），或 `auto`（VAAPI，不可用時改用 libx264）。QSV 裝置由 `qsv_device` 指定。
 
 ### 擷取卡
 
@@ -49,8 +50,8 @@ WebCodecs 只在 HTTPS（或 localhost）下可用，所以請不要關掉 TLS�
 
 ## 設計說明
 
-- **影像**：ffmpeg 從 V4L2 讀 YUYV → VAAPI `h264_vaapi`（或 libx264 ultrafast/zerolatency）→ Annex‑B 輸出到 stdout。
-  伺服器以 AUD 切出每個影格，加上 9 位元組標頭（flags + 時間戳）後經 WebSocket 送出；瀏覽器用 `VideoDecoder` 解碼後畫到 canvas。
+- **影像**：ffmpeg 從 V4L2 讀 YUYV → Intel QSV `av1_qsv` → IVF 輸出；也可選 VAAPI `h264_vaapi` 或 libx264 ultrafast/zerolatency，輸出 Annex‑B。
+  伺服器以 IVF 標頭（AV1）或 AUD（H.264）切出每個影格，加上 9 位元組標頭（flags + 時間戳）後經 WebSocket 送出；瀏覽器用 `VideoDecoder` 解碼後畫到 canvas。
   沒有觀看者 5 秒後停止 ffmpeg，釋放擷取卡。客戶端跟不上時丟棄到下一個關鍵影格（預設每秒一個）。
 - **音訊**：ffmpeg 從 ALSA 讀擷取卡的 48 kHz 立體聲 → Opus 20 ms 封包 → Ogg 輸出到 stdout，伺服器拆出 Opus 封包送出；
   瀏覽器以 `AudioDecoder` 解碼後排入 Web Audio，維持約 60 ms 緩衝，超過 300 ms 就重新對齊以免延遲累積。

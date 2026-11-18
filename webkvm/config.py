@@ -23,10 +23,11 @@ class VideoConfig:
     width: int = 1920
     height: int = 1080
     fps: int = 60
-    encoder: str = "auto"   # auto | vaapi | libx264
+    encoder: str = "qsv"    # qsv (AV1) | auto | vaapi | libx264
     bitrate: int = 8000     # kbps
     gop: float = 1.0        # 關鍵影格間隔（秒），也是新觀看者最長的等待時間
     vaapi_device: str = "/dev/dri/renderD128"
+    qsv_device: str = "/dev/dri/renderD128"
 
 
 @dataclass

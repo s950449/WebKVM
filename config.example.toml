@@ -14,10 +14,11 @@ device = "auto"       # auto 會優先選 MACROSILICON (MS2130/MS2131)，或填 
 width = 1920
 height = 1080
 fps = 60
-encoder = "auto"      # auto | vaapi | libx264
+encoder = "qsv"       # qsv (AV1) | auto | vaapi | libx264
 bitrate = 8000        # kbps
 gop = 1.0             # 關鍵影格間隔（秒）
 vaapi_device = "/dev/dri/renderD128"
+qsv_device = "/dev/dri/renderD128"
 
 [audio]
 enabled = true
