@@ -42,6 +42,8 @@ class HidConfig:
     port: str = "auto"      # auto 或序列埠路徑
     baud: int = 115200
     address: int = 0
+    jiggle: bool = False        # 防休眠：被控端閒置時輕微移動滑鼠（WebUI 可切換，存到 state.json）
+    jiggle_interval: int = 60   # 閒置幾秒後移動一次（5–3600）
 
 
 @dataclass
@@ -71,7 +73,7 @@ def load(path):
     return cfg
 
 
-# WebUI 中調整的影像設定存在 state.json，重啟後沿用
+# WebUI 中調整的影像設定與防休眠開關存在 state.json，重啟後沿用
 VIDEO_STATE_KEYS = ("device", "width", "height", "fps", "bitrate")
 
 
@@ -84,8 +86,11 @@ def load_state(cfg, data_dir):
     for k in VIDEO_STATE_KEYS:
         if k in state.get("video", {}):
             setattr(cfg.video, k, state["video"][k])
+    if "jiggle" in state.get("hid", {}):
+        cfg.hid.jiggle = bool(state["hid"]["jiggle"])
 
 
 def save_state(cfg, data_dir):
-    state = {"video": {k: getattr(cfg.video, k) for k in VIDEO_STATE_KEYS}}
+    state = {"video": {k: getattr(cfg.video, k) for k in VIDEO_STATE_KEYS},
+             "hid": {"jiggle": cfg.hid.jiggle}}
     (data_dir / "state.json").write_text(json.dumps(state, indent=2))

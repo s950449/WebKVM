@@ -165,7 +165,8 @@ async def _stream_ws(request, pipeline: FFmpegPipeline):
     return ws
 
 
-def _handle_hid(hid, m):
+def _handle_hid(app, m):
+    hid = app[K_HID]
     t = m["t"]
     if t == "kd":
         hid.key(m["c"], True)
@@ -183,6 +184,12 @@ def _handle_hid(hid, m):
         return {"t": "typed", "skipped": hid.type_text(m["s"])}
     elif t == "release":
         hid.release_all()
+    elif t == "jiggle":
+        on = bool(m["on"])
+        hid.set_jiggle(on)
+        app[K_CFG].hid.jiggle = on
+        config.save_state(app[K_CFG], app[K_DATA])
+        log.info("防休眠%s", "開啟" if on else "關閉")
 
 
 async def ws_hid(request):
@@ -197,7 +204,7 @@ async def ws_hid(request):
             if msg.type != WSMsgType.TEXT:
                 continue
             try:
-                reply = _handle_hid(hid, json.loads(msg.data))
+                reply = _handle_hid(request.app, json.loads(msg.data))
             except (ValueError, KeyError, TypeError) as e:
                 log.debug("無效的 HID 訊息 %r: %s", msg.data[:200], e)
                 continue
@@ -221,11 +228,18 @@ async def _status_broadcaster(app):
                     await ws.send_json({"t": "status", **st})
 
 
+async def _jiggler(app):
+    while True:
+        await asyncio.sleep(1)
+        app[K_HID].jiggle_tick()
+
+
 async def _lifecycle(app):
     app[K_HID].start()
-    task = asyncio.create_task(_status_broadcaster(app))
+    tasks = [asyncio.create_task(_status_broadcaster(app)), asyncio.create_task(_jiggler(app))]
     yield
-    task.cancel()
+    for task in tasks:
+        task.cancel()
     await app[K_VIDEO].shutdown()
     await app[K_AUDIO].shutdown()
     await asyncio.get_running_loop().run_in_executor(None, app[K_HID].close)
@@ -239,7 +253,8 @@ def create_app(cfg, data_dir, pw_hash, secure):
     app[K_SECURE] = secure
     app[K_SESSIONS] = auth.Sessions(cfg.server.session_hours)
     app[K_LIMITER] = auth.LoginLimiter()
-    app[K_HID] = CH9329(cfg.hid.port, cfg.hid.baud, cfg.hid.address)
+    app[K_HID] = CH9329(cfg.hid.port, cfg.hid.baud, cfg.hid.address,
+                        cfg.hid.jiggle, cfg.hid.jiggle_interval)
     app[K_VIDEO] = VideoPipeline(cfg.video)
     app[K_AUDIO] = AudioPipeline(cfg.audio)
     app[K_HID_WS] = set()

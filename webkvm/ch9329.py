@@ -16,6 +16,7 @@ CMD_MS_REL = 0x05
 
 ABS_MAX = 4095
 POLL_INTERVAL = 1.0
+JIGGLE_MIN, JIGGLE_MAX = 5, 3600
 MAX_TEXT = 5000
 
 # US 鍵盤配置下的 ASCII → (HID usage, 是否需要 Shift)
@@ -60,7 +61,7 @@ class CH9329Error(Exception):
 
 
 class CH9329:
-    def __init__(self, port="auto", baud=115200, address=0):
+    def __init__(self, port="auto", baud=115200, address=0, jiggle=False, jiggle_interval=60):
         self.port_cfg = port
         self.baud = baud
         self.addr = address
@@ -72,13 +73,16 @@ class CH9329:
         self._stop = threading.Event()
         self._status = {"serial": False, "chip": False, "usb": False,
                         "num": False, "caps": False, "scroll": False,
-                        "port": None, "version": None}
+                        "port": None, "version": None,
+                        "jiggle": bool(jiggle),
+                        "jiggle_interval": max(JIGGLE_MIN, min(JIGGLE_MAX, int(jiggle_interval)))}
         # 以下狀態只會在 asyncio 執行緒上存取
         self._mods = 0
         self._keys = []
         self._buttons = 0
         self._pos = (ABS_MAX // 2, ABS_MAX // 2)
         self._abs = True
+        self._last_input = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="ch9329", daemon=True)
 
     # ---------- 對外 API（從 asyncio 執行緒呼叫） ----------
@@ -174,6 +178,25 @@ class CH9329:
         else:
             self.mouse_rel(0, 0, self._buttons, steps)
 
+    def set_jiggle(self, on):
+        self._last_input = time.monotonic()
+        self._set(jiggle=bool(on))
+
+    def jiggle_tick(self, now=None):
+        """防休眠：閒置超過設定秒數時把滑鼠右移 1 再移回，淨位移為 0。回傳是否有送出。"""
+        now = time.monotonic() if now is None else now
+        st = self.status()
+        if not (st["jiggle"] and st["chip"] and st["usb"]):
+            return False
+        if self._mods or self._keys or self._buttons:
+            return False  # 使用者正按著按鍵或滑鼠鍵，不要插入移動
+        if now - self._last_input < st["jiggle_interval"]:
+            return False
+        self._submit(CMD_MS_REL, bytes([0x01, 0, 1, 0, 0]))
+        self._submit(CMD_MS_REL, bytes([0x01, 0, _s8(-1), 0, 0]))
+        self._last_input = now
+        return True
+
     # ---------- 內部 ----------
 
     def _send_kb(self, mods, keys):
@@ -181,6 +204,7 @@ class CH9329:
         self._submit(CMD_KB_GENERAL, data)
 
     def _submit(self, cmd, data, coalesce=False):
+        self._last_input = time.monotonic()
         with self._cv:
             if not self._status["serial"]:
                 return
