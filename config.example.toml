@@ -29,3 +29,5 @@ bitrate = 128         # Opus kbps
 port = "auto"         # auto 會找 /dev/serial/by-id/usb-1a86_*
 baud = 115200         # 依 CH9329 的設定，出廠預設為 9600
 address = 0
+jiggle = false        # 防休眠：被控端閒置時輕微移動滑鼠（WebUI 切換後存到 data/state.json，優先於此檔）
+jiggle_interval = 60  # 閒置幾秒後移動一次（5–3600）

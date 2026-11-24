@@ -283,7 +283,15 @@ function renderStatus(s) {
     s ? `${s.port || '無序列埠'} ${s.version || ''}` : '未連線');
   setPill($('#st-usb'), s && s.chip ? (s.usb ? 'ok' : 'warn') : '');
   for (const k of ['num', 'caps', 'scroll']) $('#led-' + k).classList.toggle('on', !!(s && s[k]));
+  const jb = $('#btn-jiggle');
+  jiggleOn = !!(s && s.jiggle);
+  jb.disabled = !s;
+  jb.textContent = jiggleOn ? '防休眠：開' : '防休眠：關';
+  jb.setAttribute('aria-pressed', String(jiggleOn));
+  jb.title = s ? `被控端閒置 ${s.jiggle_interval} 秒後把滑鼠移動 1 單位再移回，防止螢幕保護與休眠（關閉瀏覽器後仍持續）` : '';
 }
+
+let jiggleOn = false;
 
 function connectHid() {
   hws = new WebSocket(wsUrl('/ws/hid'));
@@ -559,6 +567,11 @@ $('#btn-cad').addEventListener('click', () => {
 
 $('#btn-release').addEventListener('click', () => {
   releaseAll();
+  canvas.focus();
+});
+
+$('#btn-jiggle').addEventListener('click', () => {
+  send({ t: 'jiggle', on: !jiggleOn });
   canvas.focus();
 });
 
